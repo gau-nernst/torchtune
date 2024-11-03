@@ -7,12 +7,10 @@ import math
 from typing import List
 
 import torch
-import torch.nn.functional as F
 
 from torch import nn
 
-from torchao.dtypes.nf4tensor import linear_nf4, to_nf4
-from torchtune.modules.low_precision import _register_nf4_dispatch_ops  # noqa: F401
+from torchao.dtypes.nf4tensor import to_nf4
 from torchtune.modules.peft import AdapterModule
 
 
@@ -56,15 +54,11 @@ class LoRALinear(nn.Module, AdapterModule):
         self.out_dim = out_dim
         self.use_bias = use_bias
         self._quantize_base = quantize_base
-        weight, bias = self._create_weight_and_bias()
+        self._create_weight_and_bias()
         # 'self.disabled' is a flag showing whether to turn off LoRA adapters,
         # this can be used in DPO for treating the lora adapters as the policy model
         # and disabling it to treat the base model as the reference model
         self.disabled = False
-        self.register_parameter("weight", nn.Parameter(weight))
-        self.register_parameter(
-            "bias", nn.Parameter(bias) if bias is not None else None
-        )
         self.dropout = nn.Dropout(p=dropout) if dropout > 0.0 else nn.Identity()
         self.lora_a = nn.Linear(in_features=in_dim, out_features=rank, bias=False)
         self.lora_b = nn.Linear(in_features=rank, out_features=out_dim, bias=False)
@@ -91,12 +85,9 @@ class LoRALinear(nn.Module, AdapterModule):
         (indicated via quantize_base=True).
         """
         in_dim, out_dim, use_bias = self.in_dim, self.out_dim, self.use_bias
-        linear = nn.Linear(in_features=in_dim, out_features=out_dim, bias=use_bias)
-        weight = linear.weight if not self._quantize_base else to_nf4(linear.weight)
-        bias = None
-        if self.use_bias:
-            bias = linear.bias
-        return weight, bias
+        self.base = nn.Linear(in_features=in_dim, out_features=out_dim, bias=use_bias)
+        if self._quantize_base:
+            self.base.weight.data = to_nf4(self.base.weight.data)
 
     def adapter_params(self) -> List[str]:
         """
@@ -117,14 +108,7 @@ class LoRALinear(nn.Module, AdapterModule):
             torch.Tensor: output tensor with shape ``(..., out_dim)``
 
         """
-        if self._quantize_base:
-            out = linear_nf4(input=x, weight=self.weight)
-            if self.use_bias:
-                out = out + self.bias
-        else:
-            out = F.linear(x, self.weight, self.bias)
-        if self.disabled:
-            return out
+        out = self.base(x)
         lora_out = self.lora_a(self.dropout(x))
         lora_out = (self.alpha / self.rank) * self.lora_b(lora_out)
         return out + lora_out
