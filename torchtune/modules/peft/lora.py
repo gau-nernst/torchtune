@@ -84,6 +84,18 @@ class LoRALinear(nn.Module, AdapterModule):
         # Without meta device, we only need the following:
         self.initialize_parameters()
 
+        def load_state_dict_pre_hook(module, state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs):
+            if isinstance(module, LoRALinear):
+                state_dict[f"{prefix}base.weight"] = state_dict.pop(f"{prefix}weight")
+
+        self.register_load_state_dict_pre_hook(load_state_dict_pre_hook)
+
+        def state_dict_post_hook(module, state_dict, prefix, local_metadata):
+            if isinstance(module, LoRALinear):
+                state_dict[f"{prefix}weight"] = state_dict.pop(f"{prefix}base.weight")
+
+        self.register_state_dict_post_hook(state_dict_post_hook)
+
     def initialize_parameters(self):
         # Initialize as in
         # https://github.com/microsoft/LoRA/blob/4c0333854cb905966f8cc4e9a74068c1e507c7b7/loralib/layers.py#L119
@@ -98,7 +110,7 @@ class LoRALinear(nn.Module, AdapterModule):
         in_dim, out_dim, use_bias = self.in_dim, self.out_dim, self.use_bias
         self.base = nn.Linear(in_features=in_dim, out_features=out_dim, bias=use_bias)
         if self._quantize_base:
-            self.base.weight.data = to_nf4(self.base.weight.data)
+            self.base.weight = nn.Parameter(to_nf4(self.base.weight.data), requires_grad=False)
 
     def adapter_params(self) -> List[str]:
         """
