@@ -7,11 +7,22 @@ import math
 from typing import List
 
 import torch
-
 from torch import nn
+from torchao.dtypes.nf4tensor import to_nf4, implements_torch_function, LinearNF4
 
-from torchao.dtypes.nf4tensor import to_nf4
 from torchtune.modules.peft import AdapterModule
+
+
+# https://github.com/pytorch/ao/pull/1216
+@implements_torch_function(torch.nn.functional.linear)
+def _(*args, **kwargs):
+    input = args[0]
+    weight = args[1]
+    bias = args[2] if len(args) > 2 else None
+    out = LinearNF4.apply(input, weight)
+    if bias is not None:
+        out = out + bias
+    return out
 
 
 class LoRALinear(nn.Module, AdapterModule):
